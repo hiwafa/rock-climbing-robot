@@ -1,32 +1,106 @@
-import {
-  AmbientLight,
-  Clock,
-  DirectionalLight,
-  Mesh,
-  MeshBasicMaterial,
-  MeshToonMaterial,
-  PlaneGeometry, 
-  Vector2,
-  Vector3,
-  Matrix4, 
-  Euler,
-  Object3D,
-} from 'three'
-
+import type { Object3D } from 'three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { AmbientLight, DirectionalLight, Matrix4, Vector3 } from 'three'
 import camera from './core/camera'
 import { fpsGraph, gui } from './core/gui'
 import { controls } from './core/orbit-control'
 import { renderer, scene } from './core/renderer'
-
+import { Kinematics } from './kinematics'
 import './style.css'
-import { ThreeMFLoader } from 'three/examples/jsm/Addons.js'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { Kinematics, Rot3Angles } from './kinematics'
 
+const WALL_GLTF_URL = '/models/climbing-holds.glb'
+const BEAR_GLTF_URL = '/models/taiwan-bear.glb'
 
-const loader = new GLTFLoader();
+interface Route {
+  level: number
+  holds: Object3D[]
+}
 
-// Lights
+const routes: string[] = [
+  '....CFC....', 
+  '....F..G...',
+  '....F..G...', 
+  '...CG..F...',
+  '...C.C.F...', 
+  '...C.C.....', 
+  '..G.C......', 
+  '.G..CCC....', 
+  '....C.C....',
+  '....C.C....',
+]
+
+async function loadClimbingWall(gltfUrl: string,routeLines: string[], dx = 0.75, dy = 1.0 ): Promise<[Object3D, Route]> {
+
+  const loader = new GLTFLoader()
+  const gltfScene = await new Promise<Object3D>((resolve, reject) => {
+    loader.load(gltfUrl, ({ scene }) => resolve(scene), undefined, reject)
+  })
+
+  const height = routeLines.length - 1
+  const width = routeLines[1].length
+  const level = parseInt(routeLines[0].trim(), 10)
+
+  const holds: Object3D[] = []
+  const wall = gltfScene.getObjectByName('Cube')!
+  wall.children = []
+
+  const jugRight1    = gltfScene.getObjectByName('JugRight1')!
+  const jugLeft1     = gltfScene.getObjectByName('JugLeft1')!
+  const crimpCenter1 = gltfScene.getObjectByName('CrimpCenter1')!
+  const jugCenter2   = gltfScene.getObjectByName('JugCenter2')!
+  const markerOn     = gltfScene.getObjectByName('HoldMarkerOn')!
+  const markerOff    = gltfScene.getObjectByName('HoldMarkerOff')!
+
+  for (let i = 1; i < routeLines.length; i++) {
+    const row = routeLines[i]
+    if (!row || row.startsWith('#')) continue
+
+    for (let j = 0; j < row.length; j++) {
+      const ch = row[j]
+      let proto: Object3D
+      let name: string
+
+      switch (ch) {
+        case 'C':
+          proto = crimpCenter1.clone()
+          name  = `CrimpCenter1_${i}_${j}`
+          break
+        case 'G':
+          proto = jugRight1.clone()
+          name  = `JugRight1_${i}_${j}`
+          break
+        case 'F':
+          proto = jugLeft1.clone()
+          name  = `JugLeft1_${i}_${j}`
+          break
+        case 'V':
+          proto = jugCenter2.clone()
+          name  = `JugCenter2_${i}_${j}`
+          break
+        default:
+          continue
+      }
+
+      proto.add(markerOn.clone())
+      proto.add(markerOff.clone())
+
+      proto.position.set( (width - 1 - j - width / 2) * dx, 0, (height - 1 - (i - 1) - height / 2) * dy)
+      proto.name = name
+      proto.updateMatrixWorld(true)
+
+      wall.add(proto)
+      holds.push(proto)
+    }
+  }
+
+  return [wall, { level, holds }]
+}
+
+function marker_on_off(hold: Object3D, on: boolean) {
+  hold.children[0].visible = on
+  hold.children[1].visible = !on
+}
+
 const ambientLight = new AmbientLight(0xFFFFFF, 0.5)
 scene.add(ambientLight)
 
@@ -36,200 +110,181 @@ directionalLight.shadow.mapSize.set(1024, 1024)
 directionalLight.shadow.camera.far = 15
 directionalLight.shadow.normalBias = 0.05
 directionalLight.position.set(0.25, 2, 2.25)
-
 scene.add(directionalLight)
 
-loader.load("./assets/climbing holds.glb", (gltf) => {
-  const wall = gltf.scene.children[0];  // sword 3D object is loaded
-  //holds.translateZ(-1);
-  wall.scale.set(3,5,0.1);
-  wall.position.set(0,0,-0.1)
-  scene.add(wall);
+let wall: Object3D | null = null
+let route: Route | null = null
 
-  const getObject = (name:string) => {
-    var obj : Object3D | null = null;
-    for( const it of gltf.scene.children ) {
-      if(it.name == name) {
-        obj = it;
-        break
-      }
-    }
-    return obj;
-  } 
-
-  const jug1Center = getObject("Jug1Center");
-  jug1Center?.setRotationFromEuler(new Euler(90.0/180.0*Math.PI, 0.0/180.0*Math.PI, 0.0/180.0*Math.PI));
-  scene.add(jug1Center!);
-
-  const jug1Left = getObject("Jug1Left");
-  jug1Left?.setRotationFromEuler(new Euler(90.0/180.0*Math.PI, 45.0/180.0*Math.PI, 0.0/180.0*Math.PI));
-  scene.add(jug1Left!);
-
-  const jug1Right = getObject("Jug1Right");
-  jug1Right?.setRotationFromEuler(new Euler(90.0/180.0*Math.PI, -45.0/180.0*Math.PI, 0.0/180.0*Math.PI));
-  scene.add(jug1Right!);
-
-  for(var i = 0; i < 10; i++ ) {
-    const cp = jug1Center!!.clone();
-    cp.translateX(0.2 * i);
-    scene.add(cp);
-  }
-  
-  console.log(`center ${jug1Center} left ${jug1Left} right ${jug1Right}`);
-  // import fragmentShader from '/@/shaders/fragment.glsl'
-  // // Shaders
-  // import vertexShader from '/@/shaders/vertex.glsl'
-
-
-
-  // const sphereMaterial = new ShaderMaterial({
-  //   uniforms: {
-  //     uTime: { value: 0 },
-  //     uFrequency: { value: new Vector2(20, 15) },
-  //   },
-  //   vertexShader,
-  //   fragmentShader,
-  // })
-
-  // const sphere = new Mesh(
-  //   new SphereGeometry(1, 32, 32),
-  //   sphereMaterial,
-  // )
-
-  // sphere.position.set(0, 2, 0)
-  // sphere.castShadow = true
-  // scene.add(sphere)
-
-  // const geometry = new THREE.BoxGeometry(1, 0.2, 2);
-  // const material = new THREE.MeshBasicMaterial({ color: 0xa02030 });
-  // const cube = new THREE.Mesh(geometry, material);
-  // scene.add(cube);
-});
-
-var bear = null;
-var bearKinematics : Kinematics | null = null;
-
-
-loader.load("./assets/taiwan bear.glb", (gltf) => {
-  bear = gltf.scene.children[0];
-  scene.add(bear);
-  bearKinematics = new Kinematics(bear);
-
-  // const JointFolder = gui.addFolder({
-  //   title:"Joint Control"
-  // })
-
-  // let joints : Array<Object3D> = [bear];
-
-  // while(joints.length > 0) {
-  //   const it = joints.pop();
-  //   console.log(`bear child ${it.name}`);
-  //   if (it.name.substring(0,5) == "Joint") {
-  //     console.log(`Adding joint ${it.name}`);
-  //   } 
-  //   for(const c of it.children) {
-  //     joints.push(c);
-  //   }
-  
-  //   // JointFolder.addBinding(
-  //   //   directionalLight.position,
-  //   //   key as keyof Vector3,
-  //   //   {
-  //   //     min: -100,
-  //   //     max: 100,
-  //   //     step: 1,
-  //   //   },
-  //   // )
-  // }
+loadClimbingWall(WALL_GLTF_URL, routes, 1.5, 1.5).then(([w, r]) => {
+  wall = w
+  route = r
+  scene.add(wall)
 })
 
-const DirectionalLightFolder = gui.addFolder({
-  title: 'Directional Light',
+let bear: Object3D | null = null
+let bearKinematics: Kinematics | null = null
+
+const loader = new GLTFLoader()
+loader.load(BEAR_GLTF_URL, (gltf) => {
+  bear = gltf.scene.children[0]
+  bearKinematics = new Kinematics(bear, false)
+  scene.add(bear)
+  bear.position.set(0, 1.0, -6.5)
+  bear.updateMatrixWorld(true)
+
+  const q = bearKinematics.getCurrentStateConfig()
+  q.RJoint_Back_Lower_Z_L = (q.RJoint_Back_Lower_Z_L as number) + Math.PI / 4
+  q.RJoint_Back_Lower_Z_R = (q.RJoint_Back_Lower_Z_R as number) - Math.PI / 4
+  q.RJoint_Front_Lower_Z_L = (q.RJoint_Front_Lower_Z_L as number) - Math.PI / 8
+  q.RJoint_Front_Lower_Z_R = (q.RJoint_Front_Lower_Z_R as number) + Math.PI / 8
+  bearKinematics.setConfiguration(q)
 })
 
+const DirectionalLightFolder = gui.addFolder({ title: 'Directional Light' })
 Object.keys(directionalLight.position).forEach((key) => {
   DirectionalLightFolder.addBinding(
     directionalLight.position,
     key as keyof Vector3,
-    {
-      min: -100,
-      max: 100,
-      step: 1,
-    },
+    { min: -100, max: 100, step: 1 }
   )
 })
 
+camera.position.set(0, 20, -5)
+camera.updateProjectionMatrix()
+controls.update()
 
-  // const plane = new Mesh(
-  //   new PlaneGeometry(10, 10, 10, 10),
-  //   new MeshToonMaterial({ color: '#444' }),
-  // )
-
-  // plane.rotation.set(-Math.PI / 2, 0, 0)
-  // plane.receiveShadow = true
-  // scene.add(plane)
-
-const clock = new Clock()
-
-//camera.position = new Vector3(0.00, 2.6, -1);
-camera.setRotationFromEuler( new Euler(-Math.PI/2, Math.PI/3, 0));
-camera.updateMatrixWorld();
-controls.update();
-
-async function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
+async function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-function printMatrix(name:string, m:Matrix4) {
-    console.log("Matrix", name);
-    for(let i = 0; i < 4; i++) {
-        console.log(m.elements[i+0*4].toFixed(2),m.elements[i+1*4].toFixed(2),m.elements[i+2*4].toFixed(2),m.elements[i+3*4].toFixed(2));
+function findClosestHold(pos: Vector3, holds: Object3D[], coM: Vector3, isHead: boolean = false) {
+  let min = Infinity
+  let minHold = holds[0]
+  for (const h of holds) {
+    const dist = pos.distanceToSquared(h.position)
+    const isValidHeadHold = isHead ? h.position.z > coM.z : true
+    if (
+      isValidHeadHold &&
+      (
+        (h.name.includes('Left') && h.position.x >= coM.x) ||
+        (h.name.includes('Right') && h.position.x <= coM.x) ||
+        h.name.includes('Center')
+      )
+    ) {
+      if (dist < min) {
+        min = dist
+        minHold = h
+      }
     }
-    console.log("End of Matrix", name);
+  }
+  return minHold
 }
+
+function hang_on_wall(bearKinematics: Kinematics, holds: Object3D[], setMarkers = false) {
+  if (!holds.length) return false
+
+  holds.forEach(h => marker_on_off(h, false))
+
+  let init = false
+  const effectors = [
+    'Effector_Back_L',
+    'Effector_Back_R',
+    'Effector_Front_L',
+    'Effector_Front_R',
+    'Effector_Head'
+  ]
+
+  for (const eff of effectors) {
+    const q = bearKinematics.getCurrentStateConfig()
+    const origin = bearKinematics.root.matrixWorld
+    const def_m = bearKinematics.homePositionFwd[eff]
+    if (!def_m) continue
+
+    const m = new Matrix4().multiplyMatrices(origin, def_m)
+    const current = new Vector3(m.elements[12], m.elements[13], m.elements[14])
+    const isHead = eff === 'Effector_Head'
+    const h = findClosestHold(current, holds, bearKinematics.root.position, isHead)
+    const [newConfig, err] = bearKinematics.inverseKinematics(
+      q,
+      eff,
+      h.position,
+      origin,
+      isHead ? 0.1 : 0.3,
+      0.0001,
+      isHead ? 50 : 100
+    )
+    if (setMarkers && err.lengthSq() <= 0.0001) {
+      marker_on_off(h, true)
+    }
+    bearKinematics.setConfiguration(newConfig)
+    init = true
+  }
+
+  return init
+}
+
+let pathCounter = 0
 
 const loop = async () => {
-  const elapsedTime = clock.getElapsedTime()
-
   fpsGraph.begin()
-
-  controls.update()
-  // cube.rotation.x += 1.0 / 180.0 * Math.PI
-  // cube.rotation.z += 5.0 / 180.0 * Math.PI
-
   renderer.render(scene, camera)
-  const ID4 = new Matrix4();
-  printMatrix("ID4", ID4);
 
-  if (bearKinematics) {
-    let q = bearKinematics.vectorToConfig( new Array(bearKinematics.qConfigLength).fill(0) );
-    console.log(`q: ${JSON.stringify(q)}`);
+  if (bearKinematics && route && bear) {
+    hang_on_wall(bearKinematics, route.holds, true)
 
-    const fwd = bearKinematics.forwardKinematics(q, ID4);
-    console.log(`fwd: ${JSON.stringify(fwd)}`);
-    for (let effector in fwd) {
-      const m = fwd[effector];
-      console.log(effector,"x",m.elements[0 + 3*4], "y",m.elements[1+3*4], "z",m.elements[2+3*4]);
+    if (pathCounter < 20) {
+      bearKinematics.root.translateZ(0.05)
+    } else if (pathCounter < 30) {
+      bearKinematics.root.translateZ(0.05)
+      bearKinematics.root.translateX(0.1)
+    } else if (pathCounter < 50) {
+      bearKinematics.root.translateZ(0.05)
+    } else if (pathCounter < 60) {
+      bearKinematics.root.translateZ(0.1)
+      bearKinematics.root.translateX(0.05)
+    } else if (pathCounter < 80) {
+      bearKinematics.root.translateZ(0.1)
+    } else if (pathCounter < 120) {
+      bearKinematics.root.translateZ(0.1)
+      bearKinematics.root.translateX(-0.05)
+    } else if (pathCounter < 130) {
+      bearKinematics.root.translateZ(0.1)
     }
 
-    //const n = q['RJoint_Torso_XYZ_C'] as Rot3Angles;
-    //n["x"] = n["x"] + 0.2;
-    //q["RJoint_Torso_XYZ_C"] = n;
-    
-    //bearKinematics.map["RJoint_Back_Upper_XYZ_R"].rotation.z += 0.2;;
-    //bearKinematics.setConfiguration(q);
-    const joint = "Effector_Front_L";
-    const me = fwd["Effector_Front_L"].elements;
-    const pos = new Vector3( me[0+3*4], me[1+3*4], me[2+3*4] );
+    if (pathCounter % 10 === 0) {
+      const q = bearKinematics.getCurrentStateConfig()
+      const origin = bearKinematics.root.matrixWorld
+      const headEff = 'Effector_Head'
+      const def_m = bearKinematics.homePositionFwd[headEff]
+      if (def_m) {
+        const m = new Matrix4().multiplyMatrices(origin, def_m)
+        const current = new Vector3(m.elements[12], m.elements[13], m.elements[14])
+        const nextHold = findClosestHold(
+          new Vector3(current.x, current.y, current.z + 1),
+          route.holds,
+          bearKinematics.root.position,
+          true
+        )
+        const [newConfig] = bearKinematics.inverseKinematics(
+          q,
+          headEff,
+          nextHold.position,
+          origin,
+          0.1,
+          0.0001,
+          50
+        )
+        bearKinematics.setConfiguration(newConfig)
+      }
+    }
 
-    const [newConfig, _] = bearKinematics.inverseKinematics(q, joint, new Vector3(pos.x + 0.3, pos.y + 0.3, pos.z + 0.3), ID4, 0.3);
-    bearKinematics.setConfiguration(newConfig);
-
-    await sleep(100); 
+    bearKinematics.root.updateMatrixWorld(true)
+    pathCounter++
+    await sleep(10)
   }
 
   fpsGraph.end()
   requestAnimationFrame(loop)
 }
 
-loop();
+loop()
